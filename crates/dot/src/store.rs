@@ -7,10 +7,10 @@ use sha1::{Digest, Sha1};
 use crate::git;
 use crate::task::Task;
 
-/// Hidden directory holding the dot database.
-pub const DOT_DIR: &str = ".dot";
+/// Hidden directory holding the tod database.
+pub const DOT_DIR: &str = ".tod";
 
-/// The dot database of one git repository.
+/// The tod database of one git repository.
 pub struct Store {
     root: PathBuf,
 }
@@ -68,12 +68,12 @@ impl Store {
 
     pub fn ensure_init(&self) -> Result<()> {
         if !self.is_initialized() {
-            bail!("dot is not initialized here. Run 'tod init' first.");
+            bail!("tod is not initialized here. Run 'tod init' first.");
         }
         Ok(())
     }
 
-    /// Create the .dot storage layout.
+    /// Create the .tod storage layout.
     pub fn init(&self) -> Result<()> {
         for dir in [self.todo_dir(), self.backlog_dir()] {
             fs::create_dir_all(&dir)
@@ -330,7 +330,14 @@ mod tests {
 
     #[test]
     fn load_dir_on_missing_directory_is_empty() {
-        assert!(load_dir(Path::new("/nonexistent-dot-dir")).unwrap().is_empty());
+        assert!(load_dir(Path::new("/nonexistent-tod-dir")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn storage_dir_is_dot_tod() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        assert!(store.dot_dir().ends_with(".tod"));
     }
 
     #[test]

@@ -12,11 +12,11 @@
 //! On top of the one-file-per-task storage, the library provides a
 //! project-wide planning layer:
 //!
-//! - `.dot/plan.dot`: a single central document tracking the plan
+//! - `.tod/plan.dot`: a single central document tracking the plan
 //!   (micro-todo list) of every task that has one. Keys are task
 //!   uids, values are the tab-indented steps (`[x] done` /
 //!   `[ ] todo`), in the regular dot format.
-//! - `.dot/md/<uid>.md`: the generated spec markdown of each task,
+//! - `.tod/md/<uid>.md`: the generated spec markdown of each task,
 //!   the brief meant to be handed to a development agent.
 //!
 //! The plan file is the source of truth; markdowns are generated.
