@@ -22,17 +22,24 @@ enum Commands {
     /// Initialize the tod storage in the current git repository
     Init {
         /// Install the agent skill without asking
-        #[arg(long, conflicts_with = "no_skill")]
+        #[arg(long, conflicts_with_all = ["no_skill", "agent"])]
         skill: bool,
         /// Do not install the agent skill
         #[arg(long)]
         no_skill: bool,
+        /// Install the skill for this agent, without asking
+        /// (claude | cursor | generic)
+        #[arg(long, value_name = "AGENT", conflicts_with_all = ["skill", "no_skill"])]
+        agent: Option<String>,
     },
     /// Install (or remove) the agent skill of this repository
     Skill {
         /// Remove the skill instead of installing it
         #[arg(short, long)]
         remove: bool,
+        /// Target agent: claude | cursor | generic (default: ask)
+        #[arg(long, value_name = "AGENT")]
+        agent: Option<String>,
     },
     /// Create a new todo in the current context, or in the backlog (-b)
     Add {
@@ -115,8 +122,8 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { skill, no_skill } => commands::init(skill, no_skill),
-        Commands::Skill { remove } => commands::skill(remove),
+        Commands::Init { skill, no_skill, agent } => commands::init(skill, no_skill, agent),
+        Commands::Skill { remove, agent } => commands::skill(remove, agent),
         Commands::Add { backlog, description } => commands::add(&description, backlog),
         Commands::Plan { backlog, description } => commands::plan(&description, backlog),
         Commands::Sub { identifier, step } => commands::sub(&identifier, &step),

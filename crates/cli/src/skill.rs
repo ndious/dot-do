@@ -7,12 +7,48 @@ use anyhow::{Context, Result};
 
 use dot::store::Store;
 
-/// Folder where the skill is installed (agent convention: one
-/// folder per skill, with a SKILL.md entrypoint).
-pub const SKILL_DIR: &str = ".agents/skills/tod";
+/// Where the skill is installed, depending on the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Agent {
+    /// Claude Code
+    Claude,
+    /// Cursor
+    Cursor,
+    /// Any other agent following the .agents convention
+    Generic,
+}
 
-pub fn skill_path(store: &Store) -> PathBuf {
-    store.root().join(SKILL_DIR).join("SKILL.md")
+impl Agent {
+    /// Directory of the skill inside the repository.
+    pub fn skill_dir(self) -> &'static str {
+        match self {
+            Agent::Claude => ".claude/skills/tod",
+            Agent::Cursor => ".cursor/skills/tod",
+            Agent::Generic => ".agents/skills/tod",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Agent::Claude => "Claude Code",
+            Agent::Cursor => "Cursor",
+            Agent::Generic => "other (.agents)",
+        }
+    }
+
+    /// Parse a --agent flag value.
+    pub fn from_flag(value: &str) -> Option<Agent> {
+        match value.trim().to_lowercase().as_str() {
+            "claude" | "claude-code" => Some(Agent::Claude),
+            "cursor" => Some(Agent::Cursor),
+            "agents" | "generic" | "other" => Some(Agent::Generic),
+            _ => None,
+        }
+    }
+}
+
+pub fn skill_path(store: &Store, agent: Agent) -> PathBuf {
+    store.root().join(agent.skill_dir()).join("SKILL.md")
 }
 
 /// The skill content. Kept in sync with the README.
@@ -88,9 +124,10 @@ are the human's storage; the briefs in `.tod/md/` are generated.
   of improvising changes to the plan.
 "#;
 
-/// Install (or overwrite) the skill. Returns the SKILL.md path.
-pub fn install(store: &Store) -> Result<PathBuf> {
-    let path = skill_path(store);
+/// Install (or overwrite) the skill for one agent.
+/// Returns the SKILL.md path.
+pub fn install(store: &Store, agent: Agent) -> Result<PathBuf> {
+    let path = skill_path(store, agent);
     let dir = path.parent().expect("skill path has a parent");
     std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     std::fs::write(&path, SKILL_MD)
@@ -98,9 +135,9 @@ pub fn install(store: &Store) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Remove the skill. Ok(false) when it was not installed.
-pub fn remove(store: &Store) -> Result<bool> {
-    let path = skill_path(store);
+/// Remove the skill of one agent. Ok(false) when it was not installed.
+pub fn remove(store: &Store, agent: Agent) -> Result<bool> {
+    let path = skill_path(store, agent);
     if !path.is_file() {
         return Ok(false);
     }
@@ -108,6 +145,17 @@ pub fn remove(store: &Store) -> Result<bool> {
     // drop the folder too when it is now empty
     let _ = std::fs::remove_dir(path.parent().expect("skill path has a parent"));
     Ok(true)
+}
+
+/// Remove every installed skill (all agents). Returns how many were removed.
+pub fn remove_all(store: &Store) -> Result<usize> {
+    let mut removed = 0;
+    for agent in [Agent::Claude, Agent::Cursor, Agent::Generic] {
+        if remove(store, agent)? {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -118,12 +166,38 @@ mod tests {
     fn install_then_remove_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path());
-        let path = install(&store).unwrap();
+        let path = install(&store, Agent::Claude).unwrap();
         assert!(path.is_file());
-        assert!(path.ends_with(".agents/skills/tod/SKILL.md"));
+        assert!(path.ends_with(".claude/skills/tod/SKILL.md"));
         assert!(std::fs::read_to_string(&path).unwrap().contains("# tod"));
-        assert!(remove(&store).unwrap());
+        assert!(remove(&store, Agent::Claude).unwrap());
         assert!(!path.exists());
-        assert!(!remove(&store).unwrap()); // already gone
+        assert!(!remove(&store, Agent::Claude).unwrap()); // already gone
+    }
+
+    #[test]
+    fn each_agent_gets_its_own_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        for agent in [Agent::Claude, Agent::Cursor, Agent::Generic] {
+            let path = install(&store, agent).unwrap();
+            assert!(path.to_string_lossy().starts_with(dir.path().to_string_lossy().as_ref()));
+            assert!(path.ends_with("tod/SKILL.md"));
+            assert!(path.to_string_lossy().contains(match agent {
+                Agent::Claude => ".claude",
+                Agent::Cursor => ".cursor",
+                Agent::Generic => ".agents",
+            }));
+        }
+        assert_eq!(remove_all(&store).unwrap(), 3);
+    }
+
+    #[test]
+    fn flag_parsing() {
+        assert_eq!(Agent::from_flag("claude"), Some(Agent::Claude));
+        assert_eq!(Agent::from_flag("Claude-Code"), Some(Agent::Claude));
+        assert_eq!(Agent::from_flag("cursor"), Some(Agent::Cursor));
+        assert_eq!(Agent::from_flag("generic"), Some(Agent::Generic));
+        assert_eq!(Agent::from_flag("nonsense"), None);
     }
 }

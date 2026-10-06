@@ -35,16 +35,28 @@ plan is the communication protocol between human and agent.
 ## Agent skill
 
 `tod init` can install a **skill** for your AI coding agent: a
-`SKILL.md` in `.agents/skills/tod/` that teaches the agent the tod
-workflow (pick the next step, `tod brief`, `tod check`, one
-micro-todo at a time, never hand-edit `.tod/`).
+`SKILL.md` that teaches the agent the tod workflow (pick the next
+step, `tod brief`, `tod check`, one micro-todo at a time, never
+hand-edit `.tod/`).
+
+The install asks **which agent you use**, because each one looks in
+its own folder:
+
+| choice | agent | skill folder |
+|---|---|---|
+| 1 | Claude Code | `.claude/skills/tod/` |
+| 2 | Cursor | `.cursor/skills/tod/` |
+| 3 | other / standard | `.agents/skills/tod/` |
 
 ```bash
-tod init                  # asks: "Install the tod skill for your AI agent? [Y/n]"
-tod init --skill          # install without asking (script-friendly)
-tod init --no-skill       # skip
-tod skill                 # (re)install the skill later
-tod skill --remove        # remove it
+tod init                        # asks, then asks which agent
+tod init --skill                # install, asks the agent when interactive
+tod init --agent claude         # install for Claude Code, no question
+tod init --no-skill             # skip
+tod skill                       # (re)install later (asks the agent)
+tod skill --agent cursor        # (re)install for Cursor
+tod skill --remove              # remove every installed skill
+tod skill --remove --agent claude  # remove only the Claude Code one
 ```
 
 Commit the skill folder so every checkout (and every agent working
@@ -181,7 +193,7 @@ cargo install --path crates/cli
 ## Usage
 
 ```bash
-tod init                    # create the .tod storage (+ agent skill prompt)
+tod init                    # create the .tod storage (+ skill + agent prompts)
 tod skill / skill --remove  # install / remove the agent skill
 tod add "Small fix"        # a plain todo
 tod plan "Complex feature" # a task with a plan + spec markdown
@@ -206,7 +218,7 @@ tod export todos.json      # export the whole database
 - Storage directory renamed from `.dot` to `.tod` (2026-10).
 - New: the planning layer (plan.dot + spec markdowns) for complex
   tasks and agentic development.
-- New: the installable agent skill (SKILL.md).
+- New: the installable agent skill (SKILL.md, per-agent folder).
 - New: the multi-repo management server (axum, login, SQLite) and
   the Yew web console, shipped as an Alpine Docker image.
 - Same base command set: init, add, ls, x, rm, mv, ctx, resolve, export.

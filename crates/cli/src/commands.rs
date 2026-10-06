@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{IsTerminal, Write};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use dot::brief;
 use dot::git;
@@ -9,26 +9,35 @@ use dot::plan::Project;
 use dot::store::Store;
 use dot::task::Task;
 
-pub fn init(skill: bool, no_skill: bool) -> Result<()> {
+pub fn init(skill: bool, no_skill: bool, agent: Option<String>) -> Result<()> {
     let store = Store::discover()?;
     store.init()?;
     println!("Initialized tod in {}", store.dot_dir().display());
 
-    // --skill / --no-skill decide directly; otherwise ask (default
-    // yes) when running interactively, and stay silent in scripts.
-    let install = if skill {
-        true
+    // --agent <name>: install directly. --skill: install, asking
+    // which agent when interactive, generic otherwise. --no-skill:
+    // skip. No flag: ask (default yes) when interactive, skip in
+    // scripts.
+    let install_for = if let Some(flag) = agent {
+        Some(parse_agent(&flag)?)
+    } else if skill {
+        Some(choose_agent_interactive()?)
     } else if no_skill {
-        false
-    } else if std::io::stdin().is_terminal() {
-        ask_install_skill()?
+        None
+    } else if std::io::stdin().is_terminal() && ask_install_skill()? {
+        Some(choose_agent_interactive()?)
     } else {
-        false
+        None
     };
-    if install {
-        install_skill(&store)?;
+    if let Some(agent) = install_for {
+        install_skill(&store, agent)?;
     }
     Ok(())
+}
+
+fn parse_agent(flag: &str) -> Result<crate::skill::Agent> {
+    crate::skill::Agent::from_flag(flag)
+        .ok_or_else(|| anyhow::anyhow!("unknown agent '{flag}' (claude | cursor | generic)"))
 }
 
 fn ask_install_skill() -> Result<bool> {
@@ -40,23 +49,50 @@ fn ask_install_skill() -> Result<bool> {
     Ok(answer.is_empty() || answer == "y" || answer == "yes")
 }
 
-pub fn skill(remove: bool) -> Result<()> {
+/// Which agent do you use? The skill folder differs per agent.
+fn choose_agent_interactive() -> Result<crate::skill::Agent> {
+    println!("\nWhich agent do you use?");
+    println!("  1) Claude Code    (.claude/skills/tod/)");
+    println!("  2) Cursor         (.cursor/skills/tod/)");
+    println!("  3) other / standard (.agents/skills/tod/)");
+    print!("Choose [1-3, default 3]: ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(match answer.trim() {
+        "1" => crate::skill::Agent::Claude,
+        "2" => crate::skill::Agent::Cursor,
+        _ => crate::skill::Agent::Generic,
+    })
+}
+
+pub fn skill(remove: bool, agent: Option<String>) -> Result<()> {
     let store = Store::discover()?;
     if remove {
-        if crate::skill::remove(&store)? {
-            println!("Removed the agent skill");
+        if let Some(flag) = agent {
+            let agent = parse_agent(&flag)?;
+            if crate::skill::remove(&store, agent)? {
+                println!("Removed the {} skill", agent.label());
+            } else {
+                println!("No skill installed for {}", agent.label());
+            }
         } else {
-            println!("No agent skill installed");
+            let removed = crate::skill::remove_all(&store)?;
+            println!("Removed {removed} skill(s)");
         }
     } else {
-        install_skill(&store)?;
+        let agent = match agent {
+            Some(flag) => parse_agent(&flag)?,
+            None => choose_agent_interactive()?,
+        };
+        install_skill(&store, agent)?;
     }
     Ok(())
 }
 
-fn install_skill(store: &Store) -> Result<()> {
-    let path = crate::skill::install(store)?;
-    println!("Installed the agent skill: {}", path.display());
+fn install_skill(store: &Store, agent: crate::skill::Agent) -> Result<()> {
+    let path = crate::skill::install(store, agent)?;
+    println!("Installed the {} skill: {}", agent.label(), path.display());
     println!("Commit it so your agent picks it up in every checkout.");
     Ok(())
 }
@@ -79,12 +115,10 @@ pub fn plan(description: &str, backlog: bool) -> Result<()> {
         store.branch()?
     };
 
-    // an empty plan in the central project file
     let mut project = Project::load(&store)?;
     project.ensure_plan(&task.uid);
     project.save(&store)?;
 
-    // the spec markdown skeleton
     let plan = project.plan(&task.uid).cloned().unwrap_or_default();
     let path = brief::write_brief(&store, &task, &context, &plan)?;
     println!("Planned #{} {} — {}", &task.uid[..5], task.description, path.display());
@@ -236,7 +270,6 @@ pub fn ctx() -> Result<()> {
 pub fn resolve(context: &str) -> Result<()> {
     let store = Store::discover()?;
     store.ensure_init()?;
-    // collect the uids before deleting, to clean up plans and briefs
     let tasks = store.load_context(context)?;
     let count = store.resolve(context)?;
     let uids: Vec<String> = tasks.iter().map(|t| t.uid.clone()).collect();
