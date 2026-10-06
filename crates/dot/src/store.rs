@@ -53,7 +53,7 @@ impl Store {
     }
 
     /// Directory holding the tasks of one branch (context).
-    pub fn context_dir(&self, branch: &str) -> PathBuf {
+    pub fn context_dir(self, branch: &str) -> PathBuf {
         self.todo_dir().join(sanitize(branch))
     }
 
@@ -85,6 +85,15 @@ impl Store {
     /// Create a new task in the current context, or in the backlog.
     pub fn add(&self, description: &str, author: &str, backlog: bool) -> Result<Task> {
         self.ensure_init()?;
+        let context = if backlog { None } else { Some(self.branch()?) };
+        self.add_in(context.as_deref(), description, author)
+    }
+
+    /// Create a new task in an explicit context, or in the backlog
+    /// when the context is None. Used by the server, which manages
+    /// every context at once.
+    pub fn add_in(&self, context: Option<&str>, description: &str, author: &str) -> Result<Task> {
+        self.ensure_init()?;
         let now = chrono::Utc::now();
         let task = Task {
             uid: new_uid(description),
@@ -95,10 +104,9 @@ impl Store {
             done: false,
             content: None,
         };
-        let dir = if backlog {
-            self.backlog_dir()
-        } else {
-            self.context_dir(&self.branch()?)
+        let dir = match context {
+            Some(branch) => self.context_dir(branch),
+            None => self.backlog_dir(),
         };
         fs::create_dir_all(&dir)?;
         write_task(&dir, &task)?;
@@ -351,5 +359,24 @@ mod tests {
         assert!(store.todo_dir().is_dir());
         assert!(store.backlog_dir().is_dir());
         store.ensure_init().unwrap();
+    }
+
+    #[test]
+    fn add_in_creates_tasks_in_context_and_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        store.init().unwrap();
+
+        let in_context = store.add_in(Some("feature/server"), "in context", "tester").unwrap();
+        let in_backlog = store.add_in(None, "in backlog", "tester").unwrap();
+
+        assert!(store.context_dir("feature/server").join(&in_context.uid).is_file());
+        assert!(store.backlog_dir().join(&in_backlog.uid).is_file());
+        assert_eq!(store.load_context("feature/server").unwrap().len(), 1);
+        assert_eq!(store.load_backlog().unwrap().len(), 1);
+
+        let (context, task) = store.find_task(&in_context.uid).unwrap();
+        assert_eq!(context, "feature/server");
+        assert_eq!(task.description, "in context");
     }
 }

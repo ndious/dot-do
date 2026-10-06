@@ -1,0 +1,13 @@
+[package]
+name = "web"
+description = "Yew web console for the tod project management server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gloo-net.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen-futures.workspace = true
+yew.workspace = true

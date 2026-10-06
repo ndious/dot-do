@@ -1,0 +1,19 @@
+[package]
+name = "server"
+description = "Project management server on top of the dot store: clones a git repo and manages its .tod database"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tod-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+dot = { path = "../dot" }

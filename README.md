@@ -3,7 +3,8 @@
 A git-native todo CLI, written in Rust. Rust port of the
 [tod-cli](https://github.com/timber-dev-society/tod-cli) concept,
 extended with **planning support for complex tasks and agentic
-development**.
+development**, plus a **project management server** with a Yew web
+console.
 
 ## Main concepts
 
@@ -31,6 +32,51 @@ agent. The agent executes the next step, the human runs
 `tod check`, and the brief always reflects the real state: the
 plan is the communication protocol between human and agent.
 
+## Web server & console
+
+A small axum server manages a whole project repository: it clones it
+(or updates an existing clone with `git pull --ff-only`), then
+exposes the `.tod` database over a JSON API and serves the Yew web
+console from `crates/web/dist`.
+
+```bash
+# remote repository (cloned into .tod-server/, then updated on each start)
+cargo run -p server -- --repo https://github.com/user/project --port 8080
+
+# local repository (used in place, no clone)
+cargo run -p server -- --repo /path/to/project
+```
+
+The repository must already contain a `.tod/` (run `tod init` in it
+first). Mutations made from the console are written into the local
+clone; commit and push them (git or `tod`) to share the changes.
+
+API:
+
+- `GET /api/status` — branch, backlog and contexts with the plan and
+  progress of every task
+- `POST /api/task {description, context}` — create a task in a context
+  (or in the backlog when `context` is null)
+- `POST /api/sub {uid, text}` — add a micro todo to a task's plan
+- `POST /api/check {uid, number}` — toggle a step (briefs are
+  regenerated when they exist)
+
+### Web console (Yew)
+
+The console is a Yew 0.21 CSR app in `crates/web`. Build it once
+with [Trunk](https://trunkrs.dev), the server serves the output:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install trunk
+cargo install sass-cli        # or: npm i -g sass
+cd crates/web && trunk build  # produces crates/web/dist
+```
+
+The `web` crate is **not** part of the workspace default members: a
+plain `cargo build` at the root only builds dot, cli and server;
+building the front needs the wasm target.
+
 ## Storage layout
 
 ```
@@ -56,6 +102,10 @@ crates/dot     the dot library: document format (schema, parser,
                planning (plan, brief)
 crates/cli     the CLI (clap) built on top of the dot crate,
                binary name: tod
+crates/server  the project management server (axum): clones the git
+               repo, JSON API, serves the web console,
+               binary name: tod-server
+crates/web     the Yew (CSR) web console, built with Trunk
 ```
 
 ## Task file format
@@ -89,7 +139,7 @@ cargo install --path crates/cli
 ## Usage
 
 ```bash
-tod init                    # create the .tod/ storage
+tod init                    # create the .Tod storage
 tod add "Small fix"        # a plain todo
 tod plan "Complex feature" # a task with a plan + spec markdown
 tod sub 919fe "Next step"  # add a micro todo to a plan
@@ -113,6 +163,7 @@ tod export todos.json      # export the whole database
 - Storage directory renamed from `.dot` to `.tod` (2026-10).
 - New: the planning layer (plan.dot + spec markdowns) for complex
   tasks and agentic development.
+- New: the project management server (axum) and the Yew web console.
 - Same base command set: init, add, ls, x, rm, mv, ctx, resolve, export.
 
 ## License
