@@ -42,6 +42,16 @@ impl Store {
         self.dot_dir().join("backlog")
     }
 
+    /// The central plan document of the project.
+    pub fn plan_path(&self) -> PathBuf {
+        self.dot_dir().join(crate::plan::PLAN_FILE)
+    }
+
+    /// The folder holding the generated spec markdowns.
+    pub fn md_dir(&self) -> PathBuf {
+        self.dot_dir().join("md")
+    }
+
     /// Directory holding the tasks of one branch (context).
     pub fn context_dir(&self, branch: &str) -> PathBuf {
         self.todo_dir().join(sanitize(branch))
@@ -58,7 +68,7 @@ impl Store {
 
     pub fn ensure_init(&self) -> Result<()> {
         if !self.is_initialized() {
-            bail!("dot is not initialized here. Run 'dot init' first.");
+            bail!("dot is not initialized here. Run 'tod init' first.");
         }
         Ok(())
     }
@@ -123,6 +133,22 @@ impl Store {
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(out)
+    }
+
+    /// Find a task by (possibly partial) identifier, searching the
+    /// backlog first, then every context.
+    /// Returns (location, task) where location is a branch or "backlog".
+    pub fn find_task(&self, identifier: &str) -> Result<(String, Task)> {
+        let backlog = self.load_backlog()?;
+        if let Ok(task) = match_task(&backlog, identifier) {
+            return Ok(("backlog".to_string(), task.clone()));
+        }
+        for (context, tasks) in self.contexts()? {
+            if let Ok(task) = match_task(&tasks, identifier) {
+                return Ok((context, task.clone()));
+            }
+        }
+        bail!("no task found with identifier '{identifier}'")
     }
 
     /// Mark a task of the current context as complete.

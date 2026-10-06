@@ -3,10 +3,12 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 
-/// tod — a git-native todo CLI.
+/// tod — a git-native todo CLI with planning support.
 ///
 /// Each git branch is a context. Each task is a single file, named by
 /// a sha1 identifier that you can abbreviate, just like git commits.
+/// Complex tasks get a plan (micro todo list) and a spec markdown,
+/// the brief you hand to a development agent.
 #[derive(Parser)]
 #[command(name = "tod", version, about = "A git-native todo CLI")]
 struct Cli {
@@ -26,6 +28,35 @@ enum Commands {
         /// Description of the todo
         description: String,
     },
+    /// Create a task with a plan and its spec markdown
+    Plan {
+        /// Create the task in the backlog instead of the current context
+        #[arg(short, long)]
+        backlog: bool,
+        /// Description of the task
+        description: String,
+    },
+    /// Add a step (micro todo) to a task's plan
+    Sub {
+        /// Full or partial task identifier
+        identifier: String,
+        /// The step description
+        step: String,
+    },
+    /// Toggle a step of a task's plan (1-based)
+    Check {
+        /// Full or partial task identifier
+        identifier: String,
+        /// Step number (1-based)
+        number: usize,
+    },
+    /// (Re)generate and print the spec markdown of a task
+    Brief {
+        /// Full or partial task identifier
+        identifier: String,
+    },
+    /// Project overview: backlog and contexts, with progress
+    Status,
     /// List todos of the current context, or of the backlog (-b)
     Ls {
         /// List the backlog instead of the current context
@@ -72,6 +103,11 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Init => commands::init(),
         Commands::Add { backlog, description } => commands::add(&description, backlog),
+        Commands::Plan { backlog, description } => commands::plan(&description, backlog),
+        Commands::Sub { identifier, step } => commands::sub(&identifier, &step),
+        Commands::Check { identifier, number } => commands::check(&identifier, number),
+        Commands::Brief { identifier } => commands::brief(&identifier),
+        Commands::Status => commands::status(),
         Commands::Ls { backlog } => commands::ls(backlog),
         Commands::X { identifier } => commands::done(&identifier),
         Commands::Rm { backlog, identifier } => commands::rm(&identifier, backlog),

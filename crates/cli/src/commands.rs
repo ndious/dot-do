@@ -1,7 +1,12 @@
+use std::fs;
+
 use anyhow::Result;
 
+use dot::brief;
 use dot::git;
+use dot::plan::Project;
 use dot::store::Store;
+use dot::task::Task;
 
 pub fn init() -> Result<()> {
     let store = Store::discover()?;
@@ -15,6 +20,100 @@ pub fn add(description: &str, backlog: bool) -> Result<()> {
     let author = git::user_name();
     let task = store.add(description, &author, backlog)?;
     println!("Added #{} {}", &task.uid[..5], task.description);
+    Ok(())
+}
+
+pub fn plan(description: &str, backlog: bool) -> Result<()> {
+    let store = Store::discover()?;
+    let author = git::user_name();
+    let task = store.add(description, &author, backlog)?;
+    let context = if backlog {
+        "backlog".to_string()
+    } else {
+        store.branch()?
+    };
+
+    // an empty plan in the central project file
+    let mut project = Project::load(&store)?;
+    project.ensure_plan(&task.uid);
+    project.save(&store)?;
+
+    // the spec markdown skeleton
+    let plan = project.plan(&task.uid).cloned().unwrap_or_default();
+    let path = brief::write_brief(&store, &task, &context, &plan)?;
+    println!("Planned #{} {} — {}", &task.uid[..5], task.description, path.display());
+    Ok(())
+}
+
+pub fn sub(identifier: &str, step: &str) -> Result<()> {
+    let store = Store::discover()?;
+    store.ensure_init()?;
+    let (context, task) = store.find_task(identifier)?;
+
+    let mut project = Project::load(&store)?;
+    let number = project.add_step(&task.uid, step);
+    project.save(&store)?;
+    refresh_brief(&store, &task, &context, &project)?;
+
+    println!("Added step {number} to #{}: {step}", &task.uid[..5]);
+    Ok(())
+}
+
+pub fn check(identifier: &str, number: usize) -> Result<()> {
+    let store = Store::discover()?;
+    store.ensure_init()?;
+    let (context, task) = store.find_task(identifier)?;
+
+    let mut project = Project::load(&store)?;
+    let step = project.check_step(&task.uid, number)?;
+    project.save(&store)?;
+    refresh_brief(&store, &task, &context, &project)?;
+
+    let mark = if step.done { 'x' } else { ' ' };
+    println!("[{mark}] step {number} of #{}: {}", &task.uid[..5], step.text);
+    Ok(())
+}
+
+pub fn brief(identifier: &str) -> Result<()> {
+    let store = Store::discover()?;
+    store.ensure_init()?;
+    let (context, task) = store.find_task(identifier)?;
+    let project = Project::load(&store)?;
+    let plan = project.plan(&task.uid).cloned().unwrap_or_default();
+
+    let path = brief::write_brief(&store, &task, &context, &plan)?;
+    let content = fs::read_to_string(&path)?;
+    println!("{content}");
+    Ok(())
+}
+
+pub fn status() -> Result<()> {
+    let store = Store::discover()?;
+    store.ensure_init()?;
+    let project = Project::load(&store)?;
+
+    let print = |label: &str, tasks: &[Task]| {
+        println!("{label}:");
+        if tasks.is_empty() {
+            println!("  (none)");
+            return;
+        }
+        for task in tasks {
+            let mark = if task.done { 'x' } else { ' ' };
+            let progress = match project.plan(&task.uid) {
+                Some(plan) if !plan.is_empty() => {
+                    format!(" [{} {}]", plan.done_count(), plan.steps.len())
+                }
+                _ => String::new(),
+            };
+            println!("  [{mark}] #{} {}{progress}", &task.uid[..5], task.description);
+        }
+    };
+
+    print("Backlog", &store.load_backlog()?);
+    for (name, tasks) in store.contexts()? {
+        print(&name, &tasks);
+    }
     Ok(())
 }
 
@@ -57,6 +156,7 @@ pub fn done(identifier: &str) -> Result<()> {
 pub fn rm(identifier: &str, backlog: bool) -> Result<()> {
     let store = Store::discover()?;
     let task = store.remove(identifier, backlog)?;
+    forget_task(&store, &[task.uid])?;
     println!("Deleted #{} {}", &task.uid[..5], task.description);
     Ok(())
 }
@@ -89,7 +189,12 @@ pub fn ctx() -> Result<()> {
 
 pub fn resolve(context: &str) -> Result<()> {
     let store = Store::discover()?;
+    store.ensure_init()?;
+    // collect the uids before deleting, to clean up plans and briefs
+    let tasks = store.load_context(context)?;
     let count = store.resolve(context)?;
+    let uids: Vec<String> = tasks.iter().map(|t| t.uid.clone()).collect();
+    forget_task(&store, &uids)?;
     println!("Resolved context '{context}': {count} todo(s) deleted");
     Ok(())
 }
@@ -98,5 +203,31 @@ pub fn export(output: &str) -> Result<()> {
     let store = Store::discover()?;
     let (backlog, contexts) = store.export(output)?;
     println!("Exported {backlog} backlog todo(s) and {contexts} context(s) to {output}");
+    Ok(())
+}
+
+/// Remove the plan entries and spec markdowns of deleted tasks.
+fn forget_task(store: &Store, uids: &[String]) -> Result<()> {
+    let mut project = Project::load(store)?;
+    let mut changed = false;
+    for uid in uids {
+        project.remove(uid);
+        changed = true;
+        let _ = fs::remove_file(store.md_dir().join(format!("{uid}.md")));
+    }
+    if changed {
+        project.save(store)?;
+    }
+    Ok(())
+}
+
+/// Regenerate the spec markdown, but only if it already exists:
+/// 'tod brief' is the explicit way to (re)generate a brief.
+fn refresh_brief(store: &Store, task: &Task, context: &str, project: &Project) -> Result<()> {
+    let path = store.md_dir().join(format!("{}.md", task.uid));
+    if path.exists() {
+        let plan = project.plan(&task.uid).cloned().unwrap_or_default();
+        brief::write_brief(store, task, context, &plan)?;
+    }
     Ok(())
 }
