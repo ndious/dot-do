@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod commands;
+mod skill;
 
 /// tod — a git-native todo CLI with planning support.
 ///
@@ -19,7 +20,20 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize the tod storage in the current git repository
-    Init,
+    Init {
+        /// Install the agent skill without asking
+        #[arg(long, conflicts_with = "no_skill")]
+        skill: bool,
+        /// Do not install the agent skill
+        #[arg(long)]
+        no_skill: bool,
+    },
+    /// Install (or remove) the agent skill of this repository
+    Skill {
+        /// Remove the skill instead of installing it
+        #[arg(short, long)]
+        remove: bool,
+    },
     /// Create a new todo in the current context, or in the backlog (-b)
     Add {
         /// Create the todo in the backlog instead of the current context
@@ -101,7 +115,8 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init => commands::init(),
+        Commands::Init { skill, no_skill } => commands::init(skill, no_skill),
+        Commands::Skill { remove } => commands::skill(remove)?,
         Commands::Add { backlog, description } => commands::add(&description, backlog),
         Commands::Plan { backlog, description } => commands::plan(&description, backlog),
         Commands::Sub { identifier, step } => commands::sub(&identifier, &step),
@@ -115,5 +130,6 @@ fn main() -> Result<()> {
         Commands::Ctx => commands::ctx(),
         Commands::Resolve { context } => commands::resolve(&context),
         Commands::Export { output } => commands::export(&output),
-    }
+    }?;
+    Ok(())
 }

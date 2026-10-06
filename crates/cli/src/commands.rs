@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{IsTerminal, Write};
 
 use anyhow::Result;
 
@@ -8,11 +9,66 @@ use dot::plan::Project;
 use dot::store::Store;
 use dot::task::Task;
 
-pub fn init() -> Result<()> {
+pub fn init(skill: bool, no_skill: bool) -> Result<()> {
     let store = Store::discover()?;
     store.init()?;
     println!("Initialized tod in {}", store.dot_dir().display());
+
+    // --skill / --no-skill decide directly; otherwise ask (default
+    // yes) when running interactively, and stay silent in scripts.
+    let install = if skill {
+        true
+    } else if no_skill {
+        false
+    } else if std::io::stdin().is_terminal() {
+        ask_install_skill()?
+    } else {
+        false
+    };
+    if install {
+        commands::install_skill(&store)?;
+    }
     Ok(())
+}
+
+fn ask_install_skill() -> Result<bool> {
+    print!(
+        "\nInstall the tod skill for your AI agent? [Y/n] "
+    );
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    let answer = answer.trim().to_lowercase();
+    Ok(answer.is_empty() || answer == "y" || answer == "yes")
+}
+
+pub fn skill(remove: bool) -> Result<()> {
+    let store = Store::discover()?;
+    if remove {
+        if skill_lib::remove(&store)? {
+            println!("Removed the agent skill");
+        } else {
+            println!("No agent skill installed");
+        }
+    } else {
+        commands::install_skill(&store)?;
+    }
+    Ok(())
+}
+
+mod commands {
+    use super::*;
+
+    pub fn install_skill(store: &Store) -> Result<()> {
+        let path = crate::skill::install(store)?;
+        println!("Installed the agent skill: {}", path.display());
+        println!("Commit it so your agent picks it up in every checkout.");
+        Ok(())
+    }
+}
+// re-export for init()
+mod skill_lib {
+    pub use crate::skill::*;
 }
 
 pub fn add(description: &str, backlog: bool) -> Result<()> {
