@@ -1,9 +1,7 @@
-mod commands;
-mod git;
-mod store;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+
+use dot_do::commands;
 
 /// dot — a git-native todo CLI.
 ///
@@ -72,8 +70,8 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init => store::init(),
-        Commands::Add { backlog, description } => store::add(&description, backlog),
+        Commands::Init => commands::init(),
+        Commands::Add { backlog, description } => commands::add(&description, backlog),
         Commands::Ls { backlog } => commands::ls(backlog),
         Commands::X { identifier } => commands::done(&identifier),
         Commands::Rm { backlog, identifier } => commands::rm(&identifier, backlog),

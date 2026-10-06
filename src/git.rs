@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -16,10 +16,11 @@ pub fn repo_root() -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-/// Current git branch: the "context" of dot.
-pub fn current_branch() -> Result<String> {
+/// Current git branch of the repository rooted at 'dir': the "context" of dot.
+pub fn current_branch_in(dir: &Path) -> Result<String> {
     let out = Command::new("git")
         .args(["branch", "--show-current"])
+        .current_dir(dir)
         .output()
         .context("failed to run git")?;
     let branch = String::from_utf8(out.stdout)?.trim().to_string();
@@ -27,6 +28,11 @@ pub fn current_branch() -> Result<String> {
         bail!("detached HEAD state: no current branch");
     }
     Ok(branch)
+}
+
+/// Current git branch of the current working directory.
+pub fn current_branch() -> Result<String> {
+    current_branch_in(&std::env::current_dir().context("cannot get current directory")?)
 }
 
 /// Git user name, used as task author.
