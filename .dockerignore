@@ -1,0 +1,6 @@
+target/
+crates/web/dist/
+.git/
+.tod/
+.tod-server/
+*.db

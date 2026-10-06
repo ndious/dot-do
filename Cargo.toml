@@ -19,6 +19,9 @@ tempfile = "3"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+argon2 = "0.5"
+rand = "0.8"
 yew = { version = "0.21", features = ["csr"] }
 gloo-net = { version = "0.5", features = ["json"] }
 wasm-bindgen-futures = "0.4"

@@ -1,39 +1,39 @@
-//! The JSON API of tod-server, built on the dot crate.
+//! The JSON API of tod-server: login, repository registry, and the
+//! per-repository task endpoints, all built on the dot crate.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{Path as AxumPath, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
+use crate::db::Db;
+use crate::repos;
 use dot::brief;
 use dot::plan::Project;
 use dot::store::Store;
 use dot::task::Task;
 
-/// Shared state: the store of the managed repository.
-pub struct App {
-    pub store: Store,
+/// Shared server state.
+pub struct AppState {
+    pub db: Db,
+    pub workdir: PathBuf,
 }
 
-impl App {
-    pub fn new(root: PathBuf) -> Self {
-        App {
-            store: Store::new(root),
-        }
-    }
-}
+pub type SharedState = Arc<AppState>;
 
-#[derive(Debug, Clone, Serialize)]
+// ---------- views ----------
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StepView {
     pub done: bool,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskView {
     pub uid: String,
     pub description: String,
@@ -44,15 +44,15 @@ pub struct TaskView {
     pub progress: (usize, usize),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct ContextView {
     pub name: String,
     pub tasks: Vec<TaskView>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct Status {
-    pub root: String,
+    pub repo: String,
     pub branch: String,
     pub backlog: Vec<TaskView>,
     pub contexts: Vec<ContextView>,
@@ -64,10 +64,7 @@ fn task_view(task: &Task, context: &str, project: &Project) -> TaskView {
         .map(|p| {
             p.steps
                 .iter()
-                .map(|s| StepView {
-                    done: s.done,
-                    text: s.text.clone(),
-                })
+                .map(|s| StepView { done: s.done, text: s.text.clone() })
                 .collect()
         })
         .unwrap_or_default();
@@ -83,32 +80,128 @@ fn task_view(task: &Task, context: &str, project: &Project) -> TaskView {
     }
 }
 
-fn err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
+// ---------- helpers ----------
+
+type ApiError = (StatusCode, String);
+
+fn err<E: std::fmt::Display>(e: E) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
-async fn status(State(app): State<Arc<App>>) -> Result<Json<Status>, (StatusCode, String)> {
-    let s = &app.store;
-    let project = Project::load(s).map_err(err)?;
-    let branch = s.branch().map_err(err)?;
-    let backlog = s.load_backlog().map_err(err)?;
-    let contexts = s.contexts().map_err(err)?;
+fn bad_request(msg: &str) -> ApiError {
+    (StatusCode::BAD_REQUEST, msg.to_string())
+}
+
+fn unauthorized() -> ApiError {
+    (StatusCode::UNAUTHORIZED, "login required".to_string())
+}
+
+/// Extract and validate the bearer token.
+fn auth(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(unauthorized)?;
+    state.db.check_session(token).map_err(|_| unauthorized())
+}
+
+/// Resolve the store of a registered repository (clone / pull first).
+fn open_store(state: &AppState, id: i64) -> Result<Store, ApiError> {
+    let repo = state.db.get_repo(id).map_err(err)?;
+    let root = repos::prepare(&repo, &state.workdir).map_err(err)?;
+    Ok(Store::new(root))
+}
+
+fn refresh_brief(store: &Store, task: &Task, context: &str) -> anyhow::Result<()> {
+    if !store.md_dir().join(format!("{}.md", task.uid)).is_file() {
+        return Ok(());
+    }
+    let project = Project::load(store)?;
+    let plan = project.plan(&task.uid).cloned().unwrap_or_default();
+    brief::write_brief(store, task, context, &plan)?;
+    Ok(())
+}
+
+// ---------- auth ----------
+
+#[derive(Debug, Deserialize)]
+struct LoginBody {
+    username: String,
+    password: String,
+}
+
+async fn login(
+    State(state): State<SharedState>,
+    Json(body): Json<LoginBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let token = state.db.login(&body.username, &body.password).map_err(|_| {
+        (StatusCode::UNAUTHORIZED, "invalid username or password".to_string())
+    })?;
+    Ok(Json(serde_json::json!({ "token": token })))
+}
+
+// ---------- repos ----------
+
+#[derive(Debug, Deserialize)]
+struct AddRepoBody {
+    name: String,
+    url: String,
+}
+
+async fn list_repos(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::db::Repo>>, ApiError> {
+    auth(&state, &headers)?;
+    Ok(Json(state.db.list_repos().map_err(err)?))
+}
+
+async fn add_repo(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(body): Json<AddRepoBody>,
+) -> Result<Json<crate::db::Repo>, ApiError> {
+    auth(&state, &headers)?;
+    let repo = state.db.add_repo(&body.name, &body.url).map_err(err)?;
+    // clone immediately so a bad URL is reported at registration time
+    repos::prepare(&repo, &state.workdir).map_err(err)?;
+    Ok(Json(repo))
+}
+
+async fn delete_repo(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    auth(&state, &headers)?;
+    state.db.delete_repo(id).map_err(err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------- tasks (scoped by repository) ----------
+
+async fn repo_status(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
+) -> Result<Json<Status>, ApiError> {
+    auth(&state, &headers)?;
+    let store = open_store(&state, id)?;
+    let project = Project::load(&store).map_err(err)?;
+    let branch = store.branch().map_err(err)?;
+    let backlog = store.load_backlog().map_err(err)?;
+    let contexts = store.contexts().map_err(err)?;
 
     Ok(Json(Status {
-        root: s.root().display().to_string(),
+        repo: state.db.get_repo(id).map_err(err)?.name,
         branch,
-        backlog: backlog
-            .iter()
-            .map(|t| task_view(t, "backlog", &project))
-            .collect(),
+        backlog: backlog.iter().map(|t| task_view(t, "backlog", &project)).collect(),
         contexts: contexts
             .iter()
             .map(|(name, tasks)| ContextView {
                 name: name.clone(),
-                tasks: tasks
-                    .iter()
-                    .map(|t| task_view(t, name, &project))
-                    .collect(),
+                tasks: tasks.iter().map(|t| task_view(t, name, &project)).collect(),
             })
             .collect(),
     }))
@@ -122,17 +215,20 @@ struct AddTaskBody {
 }
 
 async fn add_task(
-    State(app): State<Arc<App>>,
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
     Json(body): Json<AddTaskBody>,
-) -> Result<Json<TaskView>, (StatusCode, String)> {
+) -> Result<Json<TaskView>, ApiError> {
+    auth(&state, &headers)?;
     if body.description.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "empty description".to_string()));
+        return Err(bad_request("empty description"));
     }
-    let task = app
-        .store
+    let store = open_store(&state, id)?;
+    let task = store
         .add_in(body.context.as_deref(), body.description.trim(), "web")
         .map_err(err)?;
-    let project = Project::load(&app.store).map_err(err)?;
+    let project = Project::load(&store).map_err(err)?;
     let context = body.context.unwrap_or_else(|| "backlog".to_string());
     Ok(Json(task_view(&task, &context, &project)))
 }
@@ -143,28 +239,20 @@ struct SubStepBody {
     text: String,
 }
 
-/// Regenerate the spec markdown of a task, but only if the brief
-/// already exists (the file is opt-in, created by 'tod brief').
-fn refresh_brief(store: &Store, task: &Task, context: &str) -> anyhow::Result<()> {
-    if !store.md_dir().join(format!("{}.md", task.uid)).is_file() {
-        return Ok(());
-    }
-    let project = Project::load(store)?;
-    let plan = project.plan(&task.uid).cloned().unwrap_or_default();
-    brief::write_brief(store, task, context, &plan)?;
-    Ok(())
-}
-
 async fn add_sub(
-    State(app): State<Arc<App>>,
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
     Json(body): Json<SubStepBody>,
-) -> Result<Json<TaskView>, (StatusCode, String)> {
-    let (context, task) = app.store.find_task(&body.uid).map_err(err)?;
-    let mut project = Project::load(&app.store).map_err(err)?;
+) -> Result<Json<TaskView>, ApiError> {
+    auth(&state, &headers)?;
+    let store = open_store(&state, id)?;
+    let (context, task) = store.find_task(&body.uid).map_err(err)?;
+    let mut project = Project::load(&store).map_err(err)?;
     project.add_step(&task.uid, body.text.trim());
-    project.save(&app.store).map_err(err)?;
-    refresh_brief(&app.store, &task, &context).map_err(err)?;
-    let project = Project::load(&app.store).map_err(err)?;
+    project.save(&store).map_err(err)?;
+    refresh_brief(&store, &task, &context).map_err(err)?;
+    let project = Project::load(&store).map_err(err)?;
     Ok(Json(task_view(&task, &context, &project)))
 }
 
@@ -175,23 +263,30 @@ struct CheckStepBody {
 }
 
 async fn check_step(
-    State(app): State<Arc<App>>,
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
     Json(body): Json<CheckStepBody>,
-) -> Result<Json<TaskView>, (StatusCode, String)> {
-    let (context, task) = app.store.find_task(&body.uid).map_err(err)?;
-    let mut project = Project::load(&app.store).map_err(err)?;
+) -> Result<Json<TaskView>, ApiError> {
+    auth(&state, &headers)?;
+    let store = open_store(&state, id)?;
+    let (context, task) = store.find_task(&body.uid).map_err(err)?;
+    let mut project = Project::load(&store).map_err(err)?;
     project.check_step(&task.uid, body.number).map_err(err)?;
-    project.save(&app.store).map_err(err)?;
-    refresh_brief(&app.store, &task, &context).map_err(err)?;
-    let project = Project::load(&app.store).map_err(err)?;
+    project.save(&store).map_err(err)?;
+    refresh_brief(&store, &task, &context).map_err(err)?;
+    let project = Project::load(&store).map_err(err)?;
     Ok(Json(task_view(&task, &context, &project)))
 }
 
-pub fn router(app: Arc<App>) -> Router {
+pub fn router(state: SharedState) -> Router {
     Router::new()
-        .route("/api/status", get(status))
-        .route("/api/task", post(add_task))
-        .route("/api/sub", post(add_sub))
-        .route("/api/check", post(check_step))
-        .with_state(app)
+        .route("/api/login", post(login))
+        .route("/api/repos", get(list_repos).post(add_repo))
+        .route("/api/repos/:id", axum::routing::delete(delete_repo))
+        .route("/api/repos/:id/status", get(repo_status))
+        .route("/api/repos/:id/task", post(add_task))
+        .route("/api/repos/:id/sub", post(add_sub))
+        .route("/api/repos/:id/check", post(check_step))
+        .with_state(state)
 }

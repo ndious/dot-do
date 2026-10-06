@@ -1,9 +1,12 @@
-//! tod web console — a Yew (CSR) app served by the tod project server.
+//! tod web console — Yew (CSR) app: login, repository registry,
+//! and the task board of each repository. Served by the tod server.
 
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
+
+// ---------- api types ----------
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StepView {
@@ -31,7 +34,7 @@ pub struct ContextView {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Status {
     #[serde(default)]
-    pub root: String,
+    pub repo: String,
     #[serde(default)]
     pub branch: String,
     #[serde(default)]
@@ -40,33 +43,56 @@ pub struct Status {
     pub contexts: Vec<ContextView>,
 }
 
-async fn api_get_status() -> Option<Status> {
-    let resp = Request::get("/api/status").send().await.ok()?;
-    resp.json::<Status>().await.ok()
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RepoView {
+    pub id: i64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub url: String,
 }
 
-async fn api_post(path: &str, body: &serde_json::Value) -> bool {
-    match Request::post(path).json(body).send().await {
+// ---------- api helpers ----------
+
+async fn api_get<T: for<'de> Deserialize<'de>>(token: &str, path: &str) -> Option<T> {
+    let resp = Request::get(path)
+        .header("Authorization", &format!("Bearer {token}"))
+        .send()
+        .await
+        .ok()?;
+    resp.json::<T>().await.ok()
+}
+
+#[derive(Deserialize)]
+struct LoginResp { token: String }
+
+async fn api_login(u: String, p: String) -> Option<String> {
+    let body = serde_json::json!({ "username": u, "password": p });
+    let resp = Request::post("/api/login").json(&body).send().await.ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    resp.json::<LoginResp>().await.ok().map(|r| r.token)
+}
+
+async fn api_post(token: &str, path: &str, body: &serde_json::Value) -> bool {
+    match Request::post(path)
+        .header("Authorization", &format!("Bearer {token}"))
+        .json(body)
+        .send()
+        .await
+    {
         Ok(resp) => resp.ok(),
         Err(_) => false,
     }
 }
 
-/// Fetch the whole status and update the state.
-fn refresh(status: &UseStateHandle<Status>) -> Callback<()> {
-    let status = status.clone();
-    Callback::from(move |_| {
-        let status = status.clone();
-        spawn_local(async move {
-            if let Some(s) = api_get_status().await {
-                status.set(s);
-            }
-        });
-    })
-}
+// ---------- components ----------
 
 #[derive(Properties, PartialEq)]
 pub struct TaskCardProps {
+    pub token: String,
+    pub repo_id: i64,
     pub task: TaskView,
     pub on_refresh: Callback<()>,
 }
@@ -77,14 +103,16 @@ pub fn task_card(props: &TaskCardProps) -> Html {
     let new_step = use_state(String::new);
 
     let on_check = {
+        let token = props.token.clone();
+        let path = format!("/api/repos/{}/check", props.repo_id);
         let uid = task.uid.clone();
         let on_refresh = props.on_refresh.clone();
         Callback::from(move |n: usize| {
-            let uid = uid.clone();
+            let (token, path, uid) = (token.clone(), path.clone(), uid.clone());
             let on_refresh = on_refresh.clone();
             spawn_local(async move {
                 let body = serde_json::json!({ "uid": uid, "number": n });
-                api_post("/api/check", &body).await;
+                api_post(&token, &path, &body).await;
                 on_refresh.emit(());
             });
         })
@@ -105,6 +133,8 @@ pub fn task_card(props: &TaskCardProps) -> Html {
         .collect::<Html>();
 
     let on_submit_step = {
+        let token = props.token.clone();
+        let path = format!("/api/repos/{}/sub", props.repo_id);
         let uid = task.uid.clone();
         let new_step = new_step.clone();
         let on_refresh = props.on_refresh.clone();
@@ -114,11 +144,11 @@ pub fn task_card(props: &TaskCardProps) -> Html {
             if text.trim().is_empty() {
                 return;
             }
-            let uid = uid.clone();
+            let (token, path, uid) = (token.clone(), path.clone(), uid.clone());
             let on_refresh = on_refresh.clone();
             spawn_local(async move {
                 let body = serde_json::json!({ "uid": uid, "text": text });
-                api_post("/api/sub", &body).await;
+                api_post(&token, &path, &body).await;
                 on_refresh.emit(());
             });
         })
@@ -152,6 +182,8 @@ pub fn task_card(props: &TaskCardProps) -> Html {
 
 #[derive(Properties, PartialEq)]
 pub struct AddFormProps {
+    pub token: String,
+    pub repo_id: i64,
     pub contexts: Vec<String>,
     pub on_refresh: Callback<()>,
 }
@@ -162,6 +194,8 @@ pub fn add_form(props: &AddFormProps) -> Html {
     let context = use_state(|| "backlog".to_string());
 
     let on_submit = {
+        let token = props.token.clone();
+        let path = format!("/api/repos/{}/task", props.repo_id);
         let description = description.clone();
         let context = context.clone();
         let on_refresh = props.on_refresh.clone();
@@ -172,6 +206,7 @@ pub fn add_form(props: &AddFormProps) -> Html {
                 return;
             }
             let ctx = (*context).clone();
+            let (token, path) = (token.clone(), path.clone());
             let on_refresh = on_refresh.clone();
             spawn_local(async move {
                 let body = serde_json::json!({
@@ -182,7 +217,7 @@ pub fn add_form(props: &AddFormProps) -> Html {
                         serde_json::Value::String(ctx)
                     },
                 });
-                api_post("/api/task", &body).await;
+                api_post(&token, &path, &body).await;
                 on_refresh.emit(());
             });
         })
@@ -213,61 +248,242 @@ pub fn add_form(props: &AddFormProps) -> Html {
     }
 }
 
+// ---------- login ----------
+
+#[derive(Properties, PartialEq)]
+pub struct LoginProps {
+    pub on_login: Callback<String>,
+}
+
+#[function_component(Login)]
+pub fn login(props: &LoginProps) -> Html {
+    let username = use_state(String::new);
+    let password = use_state(String::new);
+    let error = use_state(|| false);
+
+    let on_submit = {
+        let username = username.clone();
+        let password = password.clone();
+        let error = error.clone();
+        let on_login = props.on_login.clone();
+        Callback::from(move |e: SubmitEvent| {
+            e.prevent_default();
+            let (u, p) = ((*username).clone(), (*password).clone());
+            let error = error.clone();
+            let on_login = on_login.clone();
+            spawn_local(async move {
+                match api_login(u, p).await {
+                    Some(token) => on_login.emit(token),
+                    None => error.set(true),
+                }
+            });
+        })
+    };
+
+    html! {
+        <form class="login" onsubmit={on_submit}>
+            <h1>{ "tod" }</h1>
+            <input
+                type="text"
+                placeholder="username"
+                value={(*username).clone()}
+                oninput={Callback::from(move |e: InputEvent| username.set(e.data_concat()))}
+            />
+            <input
+                type="password"
+                placeholder="password"
+                value={(*password).clone()}
+                oninput={Callback::from(move |e: InputEvent| password.set(e.data_concat()))}
+            />
+            if *error {
+                <p class="error">{ "invalid username or password" }</p>
+            }
+            <button type="submit">{ "log in" }</button>
+        </form>
+    }
+}
+
+// ---------- app ----------
+
 #[function_component(App)]
 pub fn app() -> Html {
+    let token = use_state(|| Option::<String>::None);
+    let repos = use_state(Vec::<RepoView>::new);
+    let current = use_state(|| Option::<i64>::None);
     let status = use_state(Status::default);
-    let on_refresh = refresh(&status);
+    let error = use_state(String::new);
+
+    let refresh_repos = {
+        let token = token.clone();
+        let repos = repos.clone();
+        Callback::from(move |_| {
+            let t = match (*token).clone() {
+                Some(t) => t,
+                None => return,
+            };
+            let repos = repos.clone();
+            spawn_local(async move {
+                if let Some(list) = api_get::<Vec<RepoView>>(&t, "/api/repos").await {
+                    repos.set(list);
+                }
+            });
+        })
+    };
+
+    let refresh_status = {
+        let token = token.clone();
+        let current = current.clone();
+        let status = status.clone();
+        Callback::from(move |_| {
+            let (t, id) = match ((*token).clone(), *current) {
+                (Some(t), Some(id)) => (t, id),
+                _ => return,
+            };
+            let status = status.clone();
+            spawn_local(async move {
+                if let Some(s) = api_get::<Status>(&t, &format!("/api/repos/{id}/status")).await {
+                    status.set(s);
+                }
+            });
+        })
+    };
 
     {
-        let on_refresh = on_refresh.clone();
-        use_effect_with((), move |_| {
-            on_refresh.emit(());
+        let refresh_status = refresh_status.clone();
+        use_effect_with(*current, move |_| {
+            refresh_status.emit(());
             || {}
         });
     }
 
-    let s = (*status).clone();
+    match (*token).clone() {
+        None => html! { <Login on_login={Callback::from(move |t: String| {
+            token.set(Some(t));
+            refresh_repos.emit(());
+        })} /> },
+        Some(t) => {
+            let s = (*status).clone();
 
-    let backlog = s
-        .backlog
-        .iter()
-        .map(|t| html! { <TaskCard task={t.clone()} on_refresh={on_refresh.clone()} /> })
-        .collect::<Html>();
-
-    let contexts = s
-        .contexts
-        .iter()
-        .map(|c| {
-            let tasks = c
-                .tasks
+            let repo_options = (*repos)
                 .iter()
-                .map(|t| html! { <TaskCard task={t.clone()} on_refresh={on_refresh.clone()} /> })
+                .map(|r| {
+                    let selected = *current == Some(r.id);
+                    html! { <option value={r.id} {selected}>{ r.name.clone() }</option> }
+                })
                 .collect::<Html>();
+
+            let on_select_repo = {
+                let current = current.clone();
+                Callback::from(move |e: InputEvent| {
+                    if let Some(v) = e.data() {
+                        if let Ok(id) = v.parse::<i64>() {
+                            current.set(Some(id));
+                        }
+                    }
+                })
+            };
+
+            let new_repo_name = use_state(String::new);
+            let new_repo_url = use_state(String::new);
+
+            let on_add_repo = {
+                let t = t.clone();
+                let name = new_repo_name.clone();
+                let url = new_repo_url.clone();
+                let error = error.clone();
+                let refresh_repos = refresh_repos.clone();
+                Callback::from(move |e: SubmitEvent| {
+                    e.prevent_default();
+                    let (n, u) = ((*name).clone(), (*url).clone());
+                    if n.trim().is_empty() || u.trim().is_empty() {
+                        return;
+                    }
+                    let (t, error, refresh) = (t.clone(), error.clone(), refresh_repos.clone());
+                    spawn_local(async move {
+                        let body = serde_json::json!({ "name": n, "url": u });
+                        if api_post(&t, "/api/repos", &body).await {
+                            error.set(String::new());
+                            refresh.emit(());
+                        } else {
+                            error.set("cannot add repository (bad URL, or no .tod inside?)".to_string());
+                        }
+                    });
+                })
+            };
+
+            let backlog = s
+                .backlog
+                .iter()
+                .map(|task| html! { <TaskCard token={t.clone()} repo_id={*current} task={task.clone()} on_refresh={refresh_status.clone()} /> })
+                .collect::<Html>();
+
+            let ctx_names: Vec<String> = s.contexts.iter().map(|c| c.name.clone()).collect();
+
+            let contexts = s
+                .contexts
+                .iter()
+                .map(|c| {
+                    let tasks = c
+                        .tasks
+                        .iter()
+                        .map(|task| html! { <TaskCard token={t.clone()} repo_id={*current} task={task.clone()} on_refresh={refresh_status.clone()} /> })
+                        .collect::<Html>();
+                    html! {
+                        <section class="context">
+                            <h2>{ format!("context: {}", c.name) }</h2>
+                            <ul>{ tasks }</ul>
+                        </section>
+                    }
+                })
+                .collect::<Html>();
+
             html! {
-                <section class="context">
-                    <h2>{ format!("context: {}", c.name) }</h2>
-                    <ul>{ tasks }</ul>
-                </section>
+                <main>
+                    <header>
+                        <h1>{ "tod" }</h1>
+                        <p class="meta">{ format!("{} — branch {}", if s.repo.is_empty() { "?" } else { s.repo.as_str() }, s.branch) }</p>
+                    </header>
+
+                    <div class="bar">
+                        <select oninput={on_select_repo}>
+                            if repos.is_empty() {
+                                <option>{ "no repository yet" }</option>
+                            }
+                            { repo_options }
+                        </select>
+                        <button onclick={Callback::from(move |_| refresh_status.emit(()))}>{ "refresh" }</button>
+                    </div>
+
+                    <div class="bar">
+                        <input
+                            type="text"
+                            placeholder="repo name"
+                            value={(*new_repo_name).clone()}
+                            oninput={Callback::from(move |e: InputEvent| new_repo_name.set(e.data_concat()))}
+                        />
+                        <input
+                            type="text"
+                            placeholder="git URL or local path"
+                            value={(*new_repo_url).clone()}
+                            oninput={Callback::from(move |e: InputEvent| new_repo_url.set(e.data_concat()))}
+                        />
+                        <button onclick={Callback::from(move |_| on_add_repo.emit(Default::default()))}>{ "add repo" }</button>
+                    </div>
+                    if !(*error).is_empty() {
+                        <p class="meta">{ (*error).clone() }</p>
+                    }
+
+                    if *current != None {
+                        <AddForm token={t.clone()} repo_id={*current} contexts={ctx_names} on_refresh={refresh_status.clone()} />
+                        <section class="backlog">
+                            <h2>{ "backlog" }</h2>
+                            <ul>{ backlog }</ul>
+                        </section>
+                        { contexts }
+                    }
+                </main>
             }
-        })
-        .collect::<Html>();
-
-    let ctx_names: Vec<String> = s.contexts.iter().map(|c| c.name.clone()).collect();
-    let root = if s.root.is_empty() { "?" } else { s.root.as_str() };
-
-    html! {
-        <main>
-            <header>
-                <h1>{ "tod" }</h1>
-                <p class="meta">{ format!("{} — branch {}", root, s.branch) }</p>
-            </header>
-            <AddForm contexts={ctx_names} on_refresh={on_refresh.clone()} />
-            <section class="backlog">
-                <h2>{ "backlog" }</h2>
-                <ul>{ backlog }</ul>
-            </section>
-            { contexts }
-        </main>
+        }
     }
 }
 

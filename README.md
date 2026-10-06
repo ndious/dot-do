@@ -3,8 +3,8 @@
 A git-native todo CLI, written in Rust. Rust port of the
 [tod-cli](https://github.com/timber-dev-society/tod-cli) concept,
 extended with **planning support for complex tasks and agentic
-development**, plus a **project management server** with a Yew web
-console.
+development**, plus a **multi-repo project management server**
+(login, SQLite, Yew web console, Docker image).
 
 ## Main concepts
 
@@ -32,50 +32,74 @@ agent. The agent executes the next step, the human runs
 `tod check`, and the brief always reflects the real state: the
 plan is the communication protocol between human and agent.
 
-## Web server & console
+## Project management server
 
-A small axum server manages a whole project repository: it clones it
-(or updates an existing clone with `git pull --ff-only`), then
-exposes the `.tod` database over a JSON API and serves the Yew web
-console from `crates/web/dist`.
+`tod-server` manages **several repositories** at once:
+
+- **SQLite database** (`--db`): users, sessions, and the registry of
+  managed repositories.
+- **Login/password**: passwords are hashed with Argon2; sessions are
+  bearer tokens. Bootstrap the first account with the
+  `TOD_ADMIN_USER` / `TOD_ADMIN_PASS` environment variables.
+- **Git**: each registered repository (https/git@/ssh URL, or a local
+  path) is cloned into the workdir and updated with
+  `git pull --ff-only` before each use. It must contain a `.tod/`
+  (run `tod init` in it first).
+- **Web console** served from `--static` (the built `crates/web/dist`).
 
 ```bash
-# remote repository (cloned into .tod-server/, then updated on each start)
-cargo run -p server -- --repo https://github.com/user/project --port 8080
-
-# local repository (used in place, no clone)
-cargo run -p server -- --repo /path/to/project
+cargo run -p server -- --port 8080 --db tod-server.db --workdir .tod-server --static crates/web/dist
 ```
 
-The repository must already contain a `.tod/` (run `tod init` in it
-first). Mutations made from the console are written into the local
-clone; commit and push them (git or `tod`) to share the changes.
+API (all task endpoints are scoped per repository and need the
+`Authorization: Bearer <token>` header):
 
-API:
+- `POST /api/login {username, password}` → `{token}`
+- `GET /api/repos` — list managed repositories
+- `POST /api/repos {name, url}` — register + clone a repository
+- `DELETE /api/repos/:id` — unregister (the clone stays on disk)
+- `GET /api/repos/:id/status` — branch, backlog, contexts, plans, progress
+- `POST /api/repos/:id/task {description, context}`
+- `POST /api/repos/:id/sub {uid, text}`
+- `POST /api/repos/:id/check {uid, number}`
 
-- `GET /api/status` — branch, backlog and contexts with the plan and
-  progress of every task
-- `POST /api/task {description, context}` — create a task in a context
-  (or in the backlog when `context` is null)
-- `POST /api/sub {uid, text}` — add a micro todo to a task's plan
-- `POST /api/check {uid, number}` — toggle a step (briefs are
-  regenerated when they exist)
+Mutations are written into the local clone; commit and push them
+(git or `tod`) to share the changes.
 
 ### Web console (Yew)
 
-The console is a Yew 0.21 CSR app in `crates/web`. Build it once
-with [Trunk](https://trunkrs.dev), the server serves the output:
+The console is a Yew 0.21 CSR app in `crates/web`: login screen,
+repository selector, repository registration, task board with
+clickable plans. Build it once with [Trunk](https://trunkrs.dev):
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install trunk
-cargo install sass-cli        # or: npm i -g sass
 cd crates/web && trunk build  # produces crates/web/dist
 ```
 
 The `web` crate is **not** part of the workspace default members: a
-plain `cargo build` at the root only builds dot, cli and server;
-building the front needs the wasm target.
+plain `cargo build` at the root only builds dot, cli and server.
+
+## Docker
+
+A multi-stage Dockerfile builds the server and the web console, then
+packs everything into a minimal Alpine image:
+
+```bash
+docker build -t tod-server .
+
+docker run -p 8080:8080 \
+  -e TOD_ADMIN_USER=admin -e TOD_ADMIN_PASS=changeme \
+  -v tod-data:/data \
+  tod-server
+```
+
+- `/data` (volume): the SQLite database (`tod-server.db`) and the
+  cloned repositories (`repos/`).
+- The first start creates the admin account from the environment
+  variables; afterwards users come from the database.
+- `git` is included in the image (clone/pull at runtime).
 
 ## Storage layout
 
@@ -102,8 +126,8 @@ crates/dot     the dot library: document format (schema, parser,
                planning (plan, brief)
 crates/cli     the CLI (clap) built on top of the dot crate,
                binary name: tod
-crates/server  the project management server (axum): clones the git
-               repo, JSON API, serves the web console,
+crates/server  the multi-repo project management server (axum):
+               login + SQLite, git clone/pull, JSON API, web console,
                binary name: tod-server
 crates/web     the Yew (CSR) web console, built with Trunk
 ```
@@ -139,7 +163,7 @@ cargo install --path crates/cli
 ## Usage
 
 ```bash
-tod init                    # create the .Tod storage
+tod init                    # create the .tod storage
 tod add "Small fix"        # a plain todo
 tod plan "Complex feature" # a task with a plan + spec markdown
 tod sub 919fe "Next step"  # add a micro todo to a plan
@@ -163,7 +187,8 @@ tod export todos.json      # export the whole database
 - Storage directory renamed from `.dot` to `.tod` (2026-10).
 - New: the planning layer (plan.dot + spec markdowns) for complex
   tasks and agentic development.
-- New: the project management server (axum) and the Yew web console.
+- New: the multi-repo management server (axum, login, SQLite) and
+  the Yew web console, shipped as an Alpine Docker image.
 - Same base command set: init, add, ls, x, rm, mv, ctx, resolve, export.
 
 ## License

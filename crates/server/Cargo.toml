@@ -1,6 +1,6 @@
 [package]
 name = "server"
-description = "Project management server on top of the dot store: clones a git repo and manages its .tod database"
+description = "Multi-repo project management server on top of the dot store, with login and SQLite"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,9 +11,14 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+argon2.workspace = true
 axum.workspace = true
+chrono.workspace = true
 clap.workspace = true
+rand.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 dot = { path = "../dot" }
