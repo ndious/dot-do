@@ -116,7 +116,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Init { skill, no_skill } => commands::init(skill, no_skill),
-        Commands::Skill { remove } => commands::skill(remove)?,
+        Commands::Skill { remove } => commands::skill(remove),
         Commands::Add { backlog, description } => commands::add(&description, backlog),
         Commands::Plan { backlog, description } => commands::plan(&description, backlog),
         Commands::Sub { identifier, step } => commands::sub(&identifier, &step),
@@ -130,6 +130,5 @@ fn main() -> Result<()> {
         Commands::Ctx => commands::ctx(),
         Commands::Resolve { context } => commands::resolve(&context),
         Commands::Export { output } => commands::export(&output),
-    }?;
-    Ok(())
+    }
 }
