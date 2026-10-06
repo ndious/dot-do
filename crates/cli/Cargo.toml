@@ -1,0 +1,15 @@
+[package]
+name = "cli"
+description = "A git-native todo CLI: one branch, one context, one file per task"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tod"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dot = { path = "../dot" }

@@ -16,9 +16,10 @@ A git-native todo CLI, written in Rust. Rust port of the
 ## Monorepo layout
 
 ```
-crates/dot       the library: dot document format (schema, parser,
-                 stringifier, typed fields), Task, git helpers, Store
-crates/dot-do    the CLI (clap) built on top of the dot crate
+crates/dot     the dot library: document format (schema, parser,
+               stringifier, typed fields), Task, git helpers, Store
+crates/cli     the CLI (clap) built on top of the dot crate,
+               binary name: tod
 ```
 
 The `dot` crate is the Rust port of tod-cli's `src/core/dot` library:
@@ -46,25 +47,25 @@ Content:
 Requires Rust (stable) and a git repository.
 
 ```bash
-cargo install --path crates/dot-do
+cargo install --path crates/cli
 ```
 
 ## Usage
 
 ```bash
-dot init                    # create the .dot/ storage
-dot add "Fix the login bug" # add a todo to the current branch
-dot add -b "Refactor core" # add a todo to the backlog
-dot ls                      # list todos of the current context
-dot ls -b                   # list the backlog
-dot x 919fe                 # mark task as complete
-dot rm 919fe                # delete a task
-dot rm -b 919fe             # delete a backlog task
-dot mv 919fe                # backlog -> current context
-dot mv -b 919fe             # current context -> backlog
-dot ctx                     # list contexts with todos
-dot resolve feature/login   # close a context
-dot export todos.json       # export the whole database
+tod init                    # create the .dot/ storage
+tod add "Fix the login bug" # add a todo to the current branch
+tod add -b "Refactor core" # add a todo to the backlog
+tod ls                      # list todos of the current context
+tod ls -b                   # list the backlog
+tod x 919fe                 # mark task as complete
+tod rm 919fe                # delete a task
+tod rm -b 919fe             # delete a backlog task
+tod mv 919fe                # backlog -> current context
+tod mv -b 919fe             # current context -> backlog
+tod ctx                     # list contexts with todos
+tod resolve feature/login   # close a context
+tod export todos.json       # export the whole database
 ```
 
 ## Storage layout
