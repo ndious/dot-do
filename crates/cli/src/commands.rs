@@ -26,15 +26,13 @@ pub fn init(skill: bool, no_skill: bool) -> Result<()> {
         false
     };
     if install {
-        commands::install_skill(&store)?;
+        install_skill(&store)?;
     }
     Ok(())
 }
 
 fn ask_install_skill() -> Result<bool> {
-    print!(
-        "\nInstall the tod skill for your AI agent? [Y/n] "
-    );
+    print!("\nInstall the tod skill for your AI agent? [Y/n] ");
     std::io::stdout().flush()?;
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
@@ -45,30 +43,22 @@ fn ask_install_skill() -> Result<bool> {
 pub fn skill(remove: bool) -> Result<()> {
     let store = Store::discover()?;
     if remove {
-        if skill_lib::remove(&store)? {
+        if crate::skill::remove(&store)? {
             println!("Removed the agent skill");
         } else {
             println!("No agent skill installed");
         }
     } else {
-        commands::install_skill(&store)?;
+        install_skill(&store)?;
     }
     Ok(())
 }
 
-mod commands {
-    use super::*;
-
-    pub fn install_skill(store: &Store) -> Result<()> {
-        let path = crate::skill::install(store)?;
-        println!("Installed the agent skill: {}", path.display());
-        println!("Commit it so your agent picks it up in every checkout.");
-        Ok(())
-    }
-}
-// re-export for init()
-mod skill_lib {
-    pub use crate::skill::*;
+fn install_skill(store: &Store) -> Result<()> {
+    let path = crate::skill::install(store)?;
+    println!("Installed the agent skill: {}", path.display());
+    println!("Commit it so your agent picks it up in every checkout.");
+    Ok(())
 }
 
 pub fn add(description: &str, backlog: bool) -> Result<()> {

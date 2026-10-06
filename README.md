@@ -3,8 +3,8 @@
 A git-native todo CLI, written in Rust. Rust port of the
 [tod-cli](https://github.com/timber-dev-society/tod-cli) concept,
 extended with **planning support for complex tasks and agentic
-development**, plus a **multi-repo project management server**
-(login, SQLite, Yew web console, Docker image).
+development**, an **agent skill**, plus a **multi-repo project
+management server** (login, SQLite, Yew web console, Docker image).
 
 ## Main concepts
 
@@ -31,6 +31,24 @@ status, plan with progress) meant to be pasted into an AI coding
 agent. The agent executes the next step, the human runs
 `tod check`, and the brief always reflects the real state: the
 plan is the communication protocol between human and agent.
+
+## Agent skill
+
+`tod init` can install a **skill** for your AI coding agent: a
+`SKILL.md` in `.agents/skills/tod/` that teaches the agent the tod
+workflow (pick the next step, `tod brief`, `tod check`, one
+micro-todo at a time, never hand-edit `.tod/`).
+
+```bash
+tod init                  # asks: "Install the tod skill for your AI agent? [Y/n]"
+tod init --skill          # install without asking (script-friendly)
+tod init --no-skill       # skip
+tod skill                 # (re)install the skill later
+tod skill --remove        # remove it
+```
+
+Commit the skill folder so every checkout (and every agent working
+on the repo) picks it up.
 
 ## Project management server
 
@@ -163,7 +181,8 @@ cargo install --path crates/cli
 ## Usage
 
 ```bash
-tod init                    # create the .tod storage
+tod init                    # create the .tod storage (+ agent skill prompt)
+tod skill / skill --remove  # install / remove the agent skill
 tod add "Small fix"        # a plain todo
 tod plan "Complex feature" # a task with a plan + spec markdown
 tod sub 919fe "Next step"  # add a micro todo to a plan
@@ -187,6 +206,7 @@ tod export todos.json      # export the whole database
 - Storage directory renamed from `.dot` to `.tod` (2026-10).
 - New: the planning layer (plan.dot + spec markdowns) for complex
   tasks and agentic development.
+- New: the installable agent skill (SKILL.md).
 - New: the multi-repo management server (axum, login, SQLite) and
   the Yew web console, shipped as an Alpine Docker image.
 - Same base command set: init, add, ls, x, rm, mv, ctx, resolve, export.
