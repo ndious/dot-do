@@ -1,4 +1,4 @@
-# dot-do
+# tod-do
 
 A git-native todo CLI, written in Rust. Rust port of the
 [tod-cli](https://github.com/timber-dev-society/tod-cli) concept,
